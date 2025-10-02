@@ -34,6 +34,11 @@ def send_message(chat_id, text, reply_markup=None):
         data["reply_markup"] = json.dumps(reply_markup)
     return send_request(url, data)
 
+def send_photo(chat_id, photo_id, caption):
+    url = f"{API_URL}/sendPhoto"
+    data = {"chat_id": chat_id, "photo": photo_id, "caption": caption}
+    return send_request(url, data)
+
 def edit_message(chat_id, message_id, text, reply_markup=None):
     url = f"{API_URL}/editMessageText"
     data = {"chat_id": chat_id, "message_id": message_id, "text": text}
@@ -46,13 +51,17 @@ def answer_callback(callback_query_id):
     send_request(url, {"callback_query_id": callback_query_id})
 
 def handle_start(chat_id):
-    user_data[chat_id] = {'step': 'awaiting_title', 'title': '', 'links': []}
-    keyboard = {"inline_keyboard": [[{"text": "Skip", "callback_data": "skip_title"}]]}
-    send_message(chat_id, "স্বাগতম! পোস্ট তৈরি শুরু করা যাক।\n\nপোস্টের জন্য একটি টাইটেল দিন। (ঐচ্ছিক)", keyboard)
+    user_data[chat_id] = {'step': 'awaiting_photo', 'photo_id': '', 'title': '', 'links': []}
+    keyboard = {"inline_keyboard": [[{"text": "Skip", "callback_data": "skip_photo"}]]}
+    send_message(chat_id, "স্বাগতম! পোস্ট তৈরি শুরু করা যাক।\n\nপ্রথমে একটি ছবি পাঠান। (ঐচ্ছিক)", keyboard)
 
 def handle_callback(chat_id, message_id, callback_data, callback_query_id):
     answer_callback(callback_query_id)
-    if callback_data == 'skip_title':
+    if callback_data == 'skip_photo':
+        user_data[chat_id]['step'] = 'awaiting_title'
+        keyboard = {"inline_keyboard": [[{"text": "Skip", "callback_data": "skip_title"}]]}
+        edit_message(chat_id, message_id, "ঠিক আছে, ছবি বাদ দেওয়া হলো।\n\nপোস্টের জন্য একটি টাইটেল দিন। (ঐচ্ছিক)", keyboard)
+    elif callback_data == 'skip_title':
         user_data[chat_id]['step'] = 'awaiting_link_url'
         edit_message(chat_id, message_id, "ঠিক আছে, টাইটেল বাদ দেওয়া হলো।\n\nএবার প্রথম লিংকটি দিন:")
     elif callback_data == 'skip_label':
@@ -61,11 +70,31 @@ def handle_callback(chat_id, message_id, callback_data, callback_query_id):
     elif callback_data == 'finish_post':
         generate_post(chat_id, message_id, True)
 
-def handle_message(chat_id, text):
+def handle_message(chat_id, message):
     if chat_id not in user_data:
         handle_start(chat_id)
         return
+    
     step = user_data[chat_id].get('step')
+    
+    # Handle photo
+    if step == 'awaiting_photo':
+        if 'photo' in message:
+            photo_id = message['photo'][-1]['file_id']
+            user_data[chat_id]['photo_id'] = photo_id
+            user_data[chat_id]['step'] = 'awaiting_title'
+            keyboard = {"inline_keyboard": [[{"text": "Skip", "callback_data": "skip_title"}]]}
+            send_message(chat_id, "ছবি গৃহীত হয়েছে।\n\nএখন পোস্টের জন্য একটি টাইটেল দিন। (ঐচ্ছিক)", keyboard)
+        else:
+            send_message(chat_id, "দয়া করে একটি ছবি পাঠান অথবা Skip বাটনে ক্লিক করুন।")
+        return
+    
+    # Handle text messages
+    if 'text' not in message:
+        return
+    
+    text = message['text']
+    
     if step == 'awaiting_title':
         user_data[chat_id]['title'] = text
         user_data[chat_id]['step'] = 'awaiting_link_url'
@@ -101,14 +130,22 @@ def generate_post(chat_id, message_id, is_callback):
     data = user_data.get(chat_id, {})
     if not data.get('links'):
         message = "❌ আপনি কোনো লিংক যোগ করেননি। পোস্ট তৈরি বাতিল করা হলো।"
+        if is_callback and message_id:
+            edit_message(chat_id, message_id, message)
+        else:
+            send_message(chat_id, message)
     else:
         title = data['title'] or "🍀 𝗪𝗮𝘁𝗰𝗵 𝗢𝗻𝗹𝗶𝗻𝗲 𝗢𝗿 𝗗𝗼𝘄𝗻𝗹𝗼𝗮𝗱 🌱 ✔️ #desivideos"
         links_text = "\n\n".join([f"{link['label']} 👉 {link['url']}" for link in data['links']])
-        message = f"{title}\n\n🎬 𝗩𝗜𝗗𝗘𝗢 👇👇\n\n📥 𝐃𝐨𝐰𝐧𝐥𝐨𝐚𝐝 𝐋𝐢𝐧𝐤𝐬 / 👀 𝐖𝐚𝐭𝐜𝗵 𝐎𝐧𝐥𝐢𝐧𝐞\n\n{links_text}\n\nFull hd++++8k video 🇽\nRomes hd 4k hd video🇽"
-    if is_callback and message_id:
-        edit_message(chat_id, message_id, message)
-    else:
-        send_message(chat_id, message)
+        caption = f"{title}\n\n🎬 𝗩𝗜𝗗𝗘𝗢 👇👇\n\n📥 𝐃𝐨𝐰𝐧𝐥𝐨𝐚𝐝 𝐋𝐢𝐧𝐤𝐬 / 👀 𝐖𝐚𝐭𝐜𝗵 𝐎𝐧𝐥𝐢𝐧𝐞\n\n{links_text}\n\nFull hd++++8k video 🇽\nRomes hd 4k hd video🇽"
+        
+        # Send photo with caption or just text
+        photo_id = data.get('photo_id')
+        if photo_id:
+            send_photo(chat_id, photo_id, caption)
+        else:
+            send_message(chat_id, caption)
+    
     if chat_id in user_data:
         del user_data[chat_id]
 
@@ -130,7 +167,9 @@ def main():
                             if text in ["/start", "/newpost"]:
                                 handle_start(chat_id)
                             else:
-                                handle_message(chat_id, text)
+                                handle_message(chat_id, message)
+                        elif "photo" in message:
+                            handle_message(chat_id, message)
                     elif "callback_query" in update:
                         callback = update["callback_query"]
                         handle_callback(callback["message"]["chat"]["id"], callback["message"]["message_id"], callback["data"], callback["id"])
